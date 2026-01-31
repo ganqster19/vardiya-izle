@@ -32,10 +32,24 @@ st.markdown("""
         justify-content: space-between;
         align-items: center;
     }
-    .job-info { font-size: 14px; font-weight: 600; color: #000; }
+    .job-info { font-size: 15px; font-weight: 600; color: #000; }
     .job-sub { font-size: 12px; color: #666; margin-top: 2px; }
-    .badge-stu { background:#e3f2fd; color:#1565c0; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold; }
-    .badge-pro { background:#fff3e0; color:#ef6c00; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold; }
+    
+    /* İŞ TİPİ ETİKETLERİ (YENİ EKLENDİ) */
+    .type-tag {
+        font-size: 10px;
+        font-weight: 800;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+        display: inline-block;
+        padding: 1px 4px;
+        border-radius: 3px;
+    }
+    .tag-student { color: #1565c0; background-color: #e3f2fd; border: 1px solid #bbdefb; }
+    .tag-pro { color: #e65100; background-color: #ffe0b2; border: 1px solid #ffe0b2; }
+
+    /* Atanan Kişi Rozetleri */
+    .badge-assigned { background:#f0f2f6; color:#31333F; padding:4px 8px; border-radius:6px; font-size:11px; font-weight:bold; border: 1px solid #d6d9ef; }
     .no-assign { background:#ffebee; color:#c62828; padding:2px 6px; border-radius:4px; font-size:10px; }
 </style>
 """, unsafe_allow_html=True)
@@ -58,14 +72,11 @@ def get_db_connection():
         st.stop()
 
 # --- VERİ ÇEKME (TEK SORGU - CACHED) ---
-# ttl=60 -> Veriyi 60 saniye önbellekte tutar (Çok hızlı hissettirir).
-# Butona basınca cache temizlenir.
 @st.cache_data(ttl=60)
 def get_month_data(month_str):
     conn = get_db_connection()
     c = conn.cursor()
     
-    # Tüm gerekli veriyi tek seferde çekiyoruz (JOIN ile)
     query = """
         SELECT 
             j.date, 
@@ -90,7 +101,7 @@ with c1:
     st.markdown("### 📅 Vardiya Listesi")
 with c2:
     if st.button("🔄 Yenile"):
-        st.cache_data.clear() # Cache'i temizle ve veriyi taze çek
+        st.cache_data.clear()
         st.rerun()
 
 # Tarih Seçimi
@@ -106,7 +117,7 @@ data = get_month_data(m_str)
 if not data:
     st.info("Bu ay için kayıt bulunamadı.")
 else:
-    # Veriyi Günlere Göre Grupla (Python tarafında)
+    # Veriyi Günlere Göre Grupla
     grouped = {}
     for row in data:
         d = row['date']
@@ -114,9 +125,7 @@ else:
         grouped[d].append(row)
     
     # Ekrana Bas (Sıralı)
-    # Tarih stringlerini (DD.MM.YYYY) datetime objesine çevirip sıralıyoruz
     sorted_dates = sorted(grouped.keys(), key=lambda x: datetime.strptime(x, "%d.%m.%Y"))
-    
     tr_days = {0:"Pazartesi", 1:"Salı", 2:"Çarşamba", 3:"Perşembe", 4:"Cuma", 5:"Cumartesi", 6:"Pazar"}
 
     for date_str in sorted_dates:
@@ -124,19 +133,23 @@ else:
         dt_obj = datetime.strptime(date_str, "%d.%m.%Y")
         day_name = tr_days[dt_obj.weekday()]
         
-        # Bugün ise kırmızı işaretle
         is_today = date_str == now.strftime("%d.%m.%Y")
         today_mark = "🔴 " if is_today else ""
         
         st.markdown(f'<div class="day-header">{today_mark}{date_str} - {day_name}</div>', unsafe_allow_html=True)
         
-        # O günün işleri
         for job in grouped[date_str]:
-            # Personel Etiketi
+            # 1. İş Tipi Etiketi (YENİ EKLENDİ)
+            if job['job_type'] == 'student':
+                type_html = '<span class="type-tag tag-student">🎓 ÖĞRENCİ</span>'
+            else:
+                type_html = '<span class="type-tag tag-pro">🛠 PROFESYONEL</span>'
+
+            # 2. Atanan Kişi Rozeti
             if job['stu_name']:
-                p_badge = f'<span class="badge-stu">🎓 {job["stu_name"]}</span>'
+                p_badge = f'<span class="badge-assigned">👤 {job["stu_name"]}</span>'
             elif job['pro_name']:
-                p_badge = f'<span class="badge-pro">👷 {job["pro_name"]}</span>'
+                p_badge = f'<span class="badge-assigned">👤 {job["pro_name"]}</span>'
             else:
                 p_badge = '<span class="no-assign">Atanmadı</span>'
             
@@ -144,8 +157,9 @@ else:
             st.markdown(f"""
             <div class="job-row">
                 <div>
+                    {type_html}
                     <div class="job-info">{job['cust_name']}</div>
-                    <div class="job-sub">📍 {job['location']}</div>
+                    <div class="job-sub">📍 {job['location'] or '-'}</div>
                 </div>
                 <div style="text-align:right;">
                     {p_badge}
