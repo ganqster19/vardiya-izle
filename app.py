@@ -34,8 +34,9 @@ st.markdown("""
     }
     .job-info { font-size: 15px; font-weight: 600; color: #000; }
     .job-sub { font-size: 12px; color: #666; margin-top: 2px; }
+    .sub-count { color: #e65100; font-weight: bold; font-size: 14px; margin-left: 4px; }
     
-    /* İŞ TİPİ ETİKETLERİ (YENİ EKLENDİ) */
+    /* İŞ TİPİ ETİKETLERİ */
     .type-tag {
         font-size: 10px;
         font-weight: 800;
@@ -75,25 +76,41 @@ def get_db_connection():
 @st.cache_data(ttl=60)
 def get_month_data(month_str):
     conn = get_db_connection()
-    c = conn.cursor()
-    
-    query = """
-        SELECT 
-            j.date, 
-            c.name as cust_name, 
-            c.location, 
-            j.job_type,
-            s.name as stu_name, 
-            p.name as pro_name
-        FROM jobs j
-        JOIN customers c ON j.customer_id = c.id
-        LEFT JOIN students s ON j.assigned_student_id = s.id
-        LEFT JOIN professionals p ON j.assigned_pro_id = p.id
-        WHERE j.date LIKE %s
-        ORDER BY j.date ASC
-    """
-    c.execute(query, (f"%{month_str}",))
-    return c.fetchall()
+    try:
+        c = conn.cursor()
+        
+        # 1. O ayın işlerini detaylarıyla çek (group_id ve job_tag eklendi)
+        query_jobs = """
+            SELECT 
+                j.date, 
+                c.name as cust_name, 
+                c.location, 
+                j.job_type,
+                j.job_tag,
+                j.group_id,
+                s.name as stu_name, 
+                p.name as pro_name
+            FROM jobs j
+            JOIN customers c ON j.customer_id = c.id
+            LEFT JOIN students s ON j.assigned_student_id = s.id
+            LEFT JOIN professionals p ON j.assigned_pro_id = p.id
+            WHERE j.date LIKE %s
+            ORDER BY j.date ASC
+        """
+        c.execute(query_jobs, (f"%{month_str}",))
+        month_jobs = c.fetchall()
+
+        # 2. Abonelik numaralandırması için tüm abonelik tarihlerini çek
+        query_subs = "SELECT group_id, date FROM jobs WHERE job_tag = 'subscription' AND group_id IS NOT NULL"
+        c.execute(query_subs)
+        all_subs = c.fetchall()
+        
+        return month_jobs, all_subs
+    except Exception as e:
+        st.error(f"Veri çekilirken hata oluştu: {e}")
+        return [], []
+    finally:
+        conn.close()
 
 # --- ARAYÜZ ---
 c1, c2 = st.columns([3, 1])
@@ -112,11 +129,35 @@ sel_y = col_y.selectbox("Yıl", [now.year, now.year+1], label_visibility="collap
 
 # Veriyi Getir
 m_str = f"{sel_m:02d}.{sel_y}"
-data = get_month_data(m_str)
+data, all_subs = get_month_data(m_str)
 
 if not data:
     st.info("Bu ay için kayıt bulunamadı.")
 else:
+    # Abonelik Gruplarını ve Tarihleri Hazırla
+    group_dates = {}
+    for sub in all_subs:
+        gid = sub['group_id']
+        if gid not in group_dates: group_dates[gid] = set()
+        group_dates[gid].add(sub['date'])
+
+    for gid in group_dates:
+        try:
+            group_dates[gid] = sorted(list(group_dates[gid]), key=lambda x: datetime.strptime(x, "%d.%m.%Y"))
+        except ValueError:
+            group_dates[gid] = sorted(list(group_dates[gid]))
+
+    def get_sub_label(job):
+        if job.get('job_tag') == 'subscription' and job.get('group_id'):
+            gid = job['group_id']
+            if gid in group_dates:
+                try:
+                    step = group_dates[gid].index(job['date']) + 1
+                    total = len(group_dates[gid])
+                    return f'<span class="sub-count">[{step}/{total}]</span>'
+                except ValueError: pass
+        return ""
+
     # Veriyi Günlere Göre Grupla
     grouped = {}
     for row in data:
@@ -139,13 +180,16 @@ else:
         st.markdown(f'<div class="day-header">{today_mark}{date_str} - {day_name}</div>', unsafe_allow_html=True)
         
         for job in grouped[date_str]:
-            # 1. İş Tipi Etiketi (YENİ EKLENDİ)
+            # 1. İş Tipi Etiketi
             if job['job_type'] == 'student':
                 type_html = '<span class="type-tag tag-student">🎓 ÖĞRENCİ</span>'
             else:
                 type_html = '<span class="type-tag tag-pro">🛠 PROFESYONEL</span>'
 
-            # 2. Atanan Kişi Rozeti
+            # 2. Numaralandırma Etiketi (YENİ)
+            sub_html = get_sub_label(job)
+
+            # 3. Atanan Kişi Rozeti
             if job['stu_name']:
                 p_badge = f'<span class="badge-assigned">👤 {job["stu_name"]}</span>'
             elif job['pro_name']:
@@ -158,7 +202,7 @@ else:
             <div class="job-row">
                 <div>
                     {type_html}
-                    <div class="job-info">{job['cust_name']}</div>
+                    <div class="job-info">{job['cust_name']} {sub_html}</div>
                     <div class="job-sub">📍 {job['location'] or '-'}</div>
                 </div>
                 <div style="text-align:right;">
