@@ -79,7 +79,7 @@ def get_month_data(month_str):
     try:
         c = conn.cursor()
         
-        # 1. O ayın işlerini detaylarıyla çek (group_id ve job_tag eklendi)
+        # 1. O ayın işlerini detaylarıyla çek
         query_jobs = """
             SELECT 
                 j.date, 
@@ -134,29 +134,43 @@ data, all_subs = get_month_data(m_str)
 if not data:
     st.info("Bu ay için kayıt bulunamadı.")
 else:
-    # Abonelik Gruplarını ve Tarihleri Hazırla
-    group_dates = {}
+    # --- YENİ KOTA HESAPLAMA SİSTEMİ ---
+    pkg_totals = {}
+    pkg_sessions = {}
+    
     for sub in all_subs:
         gid = sub['group_id']
-        if gid not in group_dates: group_dates[gid] = set()
-        group_dates[gid].add(sub['date'])
+        pid = gid.split('_')[0]
+        
+        if pid not in pkg_totals: pkg_totals[pid] = set()
+        pkg_totals[pid].add(gid)
+        
+        if sub.get('date'):
+            if pid not in pkg_sessions: pkg_sessions[pid] = {}
+            pkg_sessions[pid][gid] = sub['date']
 
-    for gid in group_dates:
-        try:
-            group_dates[gid] = sorted(list(group_dates[gid]), key=lambda x: datetime.strptime(x, "%d.%m.%Y"))
-        except ValueError:
-            group_dates[gid] = sorted(list(group_dates[gid]))
+    session_steps = {}
+    for pid, sessions_dict in pkg_sessions.items():
+        def sort_key(item):
+            g, d_str = item
+            try: d_obj = datetime.strptime(d_str, "%d.%m.%Y")
+            except: d_obj = datetime.min
+            return (d_obj, g) # Önce tarihsel, sonra ID sırasına göre diz
+            
+        sorted_sessions = sorted(sessions_dict.items(), key=sort_key)
+        for step, (g, d_str) in enumerate(sorted_sessions, 1):
+            session_steps[g] = step
 
     def get_sub_label(job):
         if job.get('job_tag') == 'subscription' and job.get('group_id'):
+            pid = job['group_id'].split('_')[0]
             gid = job['group_id']
-            if gid in group_dates:
-                try:
-                    step = group_dates[gid].index(job['date']) + 1
-                    total = len(group_dates[gid])
-                    return f'<span class="sub-count">[{step}/{total}]</span>'
-                except ValueError: pass
+            if gid in session_steps:
+                step = session_steps[gid]
+                total = len(pkg_totals.get(pid, []))
+                return f'<span class="sub-count">[{step}/{total}]</span>'
         return ""
+    # ------------------------------------
 
     # Veriyi Günlere Göre Grupla
     grouped = {}
