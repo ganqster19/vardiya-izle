@@ -56,7 +56,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- VERİTABANI (HIZLI BAĞLANTI) ---
-@st.cache_resource
 def get_db_connection():
     try:
         return psycopg2.connect(
@@ -224,3 +223,4 @@ else:
                 </div>
             </div>
             """, unsafe_allow_html=True)
+
